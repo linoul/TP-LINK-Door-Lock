@@ -1,0 +1,60 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TP-LINK Door Lock",
+        "description": "Enter your TP-LINK app account. Locks under the account will be listed automatically after login.",
+        "data": {
+          "username": "TP-LINK account (phone/email)",
+          "password": "Password"
+        }
+      },
+      "device": {
+        "title": "Select door lock",
+        "description": "Locks found under this account:\n\n{{ locks }}",
+        "data": {
+          "device_id": "Door lock",
+          "device_name": "Device name (optional, defaults to app alias)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Login failed: check username/password; if SMS verification is required, log in once in the TP-LINK app first",
+      "cannot_connect": "Cannot connect to TP-LINK cloud, try again later",
+      "no_locks": "No door lock (TL-SL41) found under this account",
+      "terminal_limit": "Terminal limit reached: remove old devices in the TP-LINK app under Account & Security > Login device management, then retry"
+    },
+    "abort": {
+      "already_configured": "This lock is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TP-LINK Door Lock options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "event": {
+      "lock_events": {
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "unlock": "Unlocked",
+              "lock": "Locked",
+              "door_alarm": "Door alarm",
+              "doorbell": "Doorbell",
+              "verify_failed": "Verification failed",
+              "setting_change": "Setting changed",
+              "other": "Other"
+            }
+          }
+        }
+      }
+    }
+  }
+}

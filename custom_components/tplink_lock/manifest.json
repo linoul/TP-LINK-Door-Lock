@@ -1,0 +1,16 @@
+{
+  "domain": "tplink_lock",
+  "name": "TP-LINK Door Lock",
+  "codeowners": [
+    "@zljdd"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/local/tplink_lock",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "loggers": [
+    "tplink_lock"
+  ],
+  "requirements": [],
+  "version": "1.2.4"
+}

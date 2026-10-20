@@ -1,0 +1,60 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TP-LINK 门锁",
+        "description": "输入 TP-LINK 物联 App 的账号信息，登录后将自动列出账号下的门锁供选择。",
+        "data": {
+          "username": "TP-LINK 账号（手机号/邮箱）",
+          "password": "密码"
+        }
+      },
+      "device": {
+        "title": "选择门锁",
+        "description": "账号下检测到以下门锁：\n\n{{ locks }}",
+        "data": {
+          "device_id": "门锁",
+          "device_name": "设备名称（可选，默认用 App 里的别名）"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "登录失败：请检查账号密码；若提示需要短信验证，请先在 TP-LINK 物联 App 上登录一次该账号",
+      "cannot_connect": "无法连接 TP-LINK 云端，请稍后重试",
+      "no_locks": "该账号下未发现门锁设备（TL-SL41），请确认门锁已绑定的账号",
+      "terminal_limit": "账号绑定终端数量已达上限：请在 TP-LINK 物联 App「账号与安全 → 登录设备管理」中删除旧设备后重试"
+    },
+    "abort": {
+      "already_configured": "该门锁已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "TP-LINK 门锁选项",
+        "data": {
+          "scan_interval": "轮询间隔（秒）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "event": {
+      "lock_events": {
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "unlock": "开门",
+              "lock": "关门上锁",
+              "door_alarm": "门异常",
+              "doorbell": "门铃",
+              "verify_failed": "验证失败",
+              "setting_change": "设置变更",
+              "other": "其他"
+            }
+          }
+        }
+      }
+    }
+  }
+}
