@@ -219,7 +219,7 @@ class TPLinkCloudClient:
                 "绑定终端数量已达上限，请在 TP-LINK 物联 App 账号安全中删除旧终端")
         if err == ERR_NEED_SMS:
             raise TPLinkAuthError(
-                "新终端需要短信验证：请在 App 中先登录一次该账号完成终端绑定验证")
+                "新终端需要短信验证：请在 App 的账号安全中关闭终端绑定")
         if err != ERR_OK:
             raise TPLinkAuthError("登录失败 error_code=%s" % err)
         result = data["result"]
