@@ -71,7 +71,6 @@ class TPLinkCloudDeviceIdSensor(TPLinkLockEntity):
     """云端设备 ID，供日志查询等高级操作复制使用。"""
 
     _attr_name = "云端设备 ID"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:identifier"
 
     @property
