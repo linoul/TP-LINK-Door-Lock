@@ -9,6 +9,14 @@
           "password": "密码"
         }
       },
+      "sms": {
+        "title": "验证新登录设备",
+        "description": "已向账号绑定手机号发送验证码。输入验证码完成 Home Assistant 新终端绑定；勾选重发后提交可获取新验证码。",
+        "data": {
+          "code": "短信验证码",
+          "resend": "重发验证码"
+        }
+      },
       "device": {
         "title": "选择门锁",
         "description": "账号下检测到以下门锁：\n\n{{ locks }}",
@@ -19,7 +27,9 @@
       }
     },
     "error": {
-      "invalid_auth": "登录失败：请检查账号密码；若提示需要短信验证，请先在 TP-LINK 物联 App 上登录一次该账号",
+      "invalid_auth": "登录失败：请检查账号密码",
+      "invalid_code": "验证码错误或已过期，请重新输入或重发",
+      "sms_send_failed": "短信验证码发送失败，请稍后重试",
       "cannot_connect": "无法连接 TP-LINK 云端，请稍后重试",
       "no_locks": "该账号下未发现门锁设备（TL-SL41），请确认门锁已绑定的账号",
       "terminal_limit": "账号绑定终端数量已达上限：请在 TP-LINK 物联 App「账号与安全 → 登录设备管理」中删除旧设备后重试"

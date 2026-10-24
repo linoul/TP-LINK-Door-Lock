@@ -9,6 +9,14 @@
           "password": "Password"
         }
       },
+      "sms": {
+        "title": "Verify new sign-in device",
+        "description": "A verification code was sent to the phone bound to this account. Enter it to bind Home Assistant as a new device. Select resend and submit to request a new code.",
+        "data": {
+          "code": "SMS verification code",
+          "resend": "Resend verification code"
+        }
+      },
       "device": {
         "title": "Select door lock",
         "description": "Locks found under this account:\n\n{{ locks }}",
@@ -19,7 +27,9 @@
       }
     },
     "error": {
-      "invalid_auth": "Login failed: check username/password; if SMS verification is required, log in once in the TP-LINK app first",
+      "invalid_auth": "Login failed: check username/password",
+      "invalid_code": "The verification code is incorrect or expired. Enter it again or resend it.",
+      "sms_send_failed": "Could not send the SMS verification code. Try again later.",
       "cannot_connect": "Cannot connect to TP-LINK cloud, try again later",
       "no_locks": "No door lock (TL-SL41) found under this account",
       "terminal_limit": "Terminal limit reached: remove old devices in the TP-LINK app under Account & Security > Login device management, then retry"
