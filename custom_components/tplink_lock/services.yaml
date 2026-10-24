@@ -6,7 +6,7 @@ query_logs:
   fields:
     device_id:
       name: 云端设备 ID
-      description: 此集成为该门锁保存的云端设备 ID，可从“云端设备 ID”诊断传感器复制。
+      description: 此集成为该门锁保存的云端设备 ID，可从设备信息的“序列号”复制。
       required: true
       selector:
         text:
