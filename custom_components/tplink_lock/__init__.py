@@ -30,7 +30,7 @@ from .coordinator import TPLinkLockCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "event"]
+PLATFORMS = ["sensor", "event", "button"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -181,7 +181,11 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     device_name = entry.data.get("device_name") or entry.data[CONF_DEVICE_ID][-8:]
     poll_interval = entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)
     coordinator = TPLinkLockCoordinator(hass, client, device_name, poll_interval)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        coordinator.shutdown()
+        raise
     _LOGGER.debug("首次刷新完成, data keys=%s",
                   list(coordinator.data) if coordinator.data else None)
 
@@ -204,7 +208,11 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """卸载。"""
     _LOGGER.debug("async_unload_entry")
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get(
+        "coordinator")
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        if coordinator:
+            coordinator.shutdown()
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok

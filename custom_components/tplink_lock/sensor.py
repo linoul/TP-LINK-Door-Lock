@@ -38,6 +38,7 @@ async def async_setup_entry(
         TPLinkBatterySensor(coordinator, entry, "battery"),
         TPLinkLockStateSensor(coordinator, entry, "lock_state"),
         TPLinkLastEventSensor(coordinator, entry, "last_event"),
+        TPLinkTodayOpenRecordsSensor(coordinator, entry, "today_open_records"),
     ])
 
 
@@ -173,4 +174,37 @@ class TPLinkLastEventSensor(TPLinkLockEntity):
             "时间": datetime.fromtimestamp(ts / 1000).strftime(
                 "%Y-%m-%d %H:%M:%S") if ts else None,
             "logId": recent.get("logId"),
+        }
+
+
+class TPLinkTodayOpenRecordsSensor(TPLinkLockEntity):
+    """当天开门次数及最近开门记录。"""
+
+    _attr_name = "今日开门记录"
+    _attr_icon = "mdi:door-open"
+
+    @property
+    def native_value(self) -> int | None:
+        data = self.coordinator.data or {}
+        count = data.get("today_open_count")
+        return int(count) if count is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        records = data.get("today_open_records") or []
+        formatted_records = [self._format_record(record) for record in records]
+        return {
+            "查询时间": data.get("today_records_refreshed_at"),
+            "最近记录": formatted_records[0] if formatted_records else None,
+            "开门记录": formatted_records,
+        }
+
+    def _format_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        formatted_time = self.coordinator.format_log_time(record)
+        return {
+            "时间": formatted_time,
+            "内容": record.get("logContent"),
+            "类型": EVENT_TYPE_LABELS.get(classify_log(record), "开门"),
+            "logId": record.get("logId"),
         }
