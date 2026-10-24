@@ -20,9 +20,10 @@ from .event import classify_log
 
 _LOGGER = logging.getLogger(__name__)
 
-TODAY_LOG_PAGE_SIZE = 100
+TODAY_LOG_PAGE_SIZE = 50
 TODAY_LOG_MAX_PAGES = 5
 TODAY_RECORDS_ATTRIBUTE_LIMIT = 20
+TODAY_REFRESH_RETRY_DELAY = timedelta(minutes=5)
 
 
 class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -48,6 +49,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._today_open_records: list[dict[str, Any]] = []
         self._today_open_log_ids: set[str] = set()
         self._today_records_refreshed_at: str | None = None
+        self._next_today_refresh_at: datetime | None = None
         self._unsub_midnight = async_track_time_change(
             hass, self._handle_midnight, hour=0, minute=0, second=0
         )
@@ -61,8 +63,11 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             logs = await self.hass.async_add_executor_job(
                 self.client.get_logs, 10)
             current_date = self._now().date()
-            if self._today_date != current_date:
-                await self.async_refresh_today_open_records()
+            if self._should_refresh_today_records(current_date):
+                try:
+                    await self.async_refresh_today_open_records()
+                except (TPLinkApiError, TPLinkAuthError, TPLinkCloudError) as err:
+                    self._record_today_refresh_failure(err)
             new_logs = [log for log in logs
                         if log.get("logId") not in self._seen_log_ids]
             self._merge_new_today_open_records(new_logs, current_date)
@@ -126,6 +131,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._today_open_log_ids = log_ids
         self._today_records_refreshed_at = self._now().strftime(
             "%Y-%m-%d %H:%M:%S")
+        self._next_today_refresh_at = None
         self._publish_today_open_records()
 
     def _get_today_open_summary(
@@ -144,6 +150,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             logs = self.client.get_log_page(
                 limit=TODAY_LOG_PAGE_SIZE,
                 start=start,
+                end_time=-1,
                 last_log_id=last_log_id,
             )
             if not logs:
@@ -242,6 +249,25 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _now(self) -> datetime:
         return datetime.now(self._time_zone)
 
+    def _should_refresh_today_records(self, current_date: date) -> bool:
+        """判断当天基线是否尚未建立，或失败后的重试时间是否已到。"""
+        return (
+            self._today_date != current_date
+            and (
+                self._next_today_refresh_at is None
+                or self._now() >= self._next_today_refresh_at
+            )
+        )
+
+    def _record_today_refresh_failure(self, err: Exception) -> None:
+        """今日统计失败不能影响门锁主轮询，稍后再尝试建立基线。"""
+        self._next_today_refresh_at = self._now() + TODAY_REFRESH_RETRY_DELAY
+        _LOGGER.warning(
+            "刷新今日开门记录失败，将在 %s 后重试: %s",
+            self._next_today_refresh_at.strftime("%H:%M:%S"),
+            err,
+        )
+
     def _publish_today_open_records(self) -> None:
         if self.data is None:
             return
@@ -262,6 +288,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._today_open_log_ids = set()
         self._today_records_refreshed_at = now.astimezone(
             self._time_zone).strftime("%Y-%m-%d %H:%M:%S")
+        self._next_today_refresh_at = None
         self._publish_today_open_records()
         self.hass.async_create_task(self._async_refresh_today_open_records_safe())
 
@@ -269,7 +296,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             await self.async_refresh_today_open_records()
         except (TPLinkApiError, TPLinkAuthError, TPLinkCloudError) as err:
-            _LOGGER.warning("零点刷新今日开门记录失败: %s", err)
+            self._record_today_refresh_failure(err)
 
     def shutdown(self) -> None:
         """取消零点定时器。"""
