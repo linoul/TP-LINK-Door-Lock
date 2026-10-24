@@ -12,7 +12,9 @@
 | 门锁状态 | 正常 / 门锁破坏 / 已上锁 / 门未关 / 门虚掩 / 已开锁 / 门未锁好（映射取自 App 反编译） |
 | 最近事件 | 状态直接显示事件内容，例如「"张三"通过人脸开门成功」 |
 | 事件实体 | 开门 / 上锁 / 门异常 / 门铃 / 验证失败 / 设置变更 / 其他 |
-| 配置向导 | 账号密码登录 → 自动列出门锁下拉选择，无需手抄 deviceId |
+| 云端设备 ID | 在诊断分类下展示，便于日志查询时复制 |
+| 云端日志查询 | 支持按日期查询、每页 1–100 条及游标分页 |
+| 配置向导 | 账号密码登录 → 新终端短信验证 → 自动列出门锁下拉选择 |
 | 多门锁 | 同一账号下多把门锁可分别添加 |
 
 ## 安装
@@ -34,7 +36,7 @@
 2. 输入 TP-LINK 物联 App 的**账号（手机号/邮箱）**和**密码**
 3. 登录成功后会出现下拉列表，选择要接入的门锁 → 提交
 
-> 首次从新终端登录可能需要在 App 里完成一次短信验证；
+> 首次从新终端登录需要短信验证时，HA 会自动发送验证码并显示输入框；
 > 若提示「终端数量已达上限」，到 App「账号与安全 → 登录设备管理」删除旧设备即可。
 
 ## 实体
@@ -44,6 +46,7 @@
 | `sensor.<门锁>_电量` | 电池百分比（诊断分类） |
 | `sensor.<门锁>_门锁状态` | 中文状态文本；属性：`原始值`、`告警` |
 | `sensor.<门锁>_最近事件` | 最近一条事件内容；属性：`事件类型`、`时间`、`logId` |
+| `sensor.<门锁>_云端设备_id` | TP-LINK 云端设备 ID（诊断分类，供日志查询复制） |
 | `event.<门锁>` | 事件实体，供自动化按 `event_type` 触发 |
 
 ### 门锁状态映射
@@ -62,6 +65,58 @@
 ### 事件类型
 
 `unlock`（开门）、`lock`（上锁）、`door_alarm`（门异常）、`doorbell`（门铃）、`verify_failed`（验证失败）、`setting_change`（设置变更）、`other`。
+
+## 查询云端日志
+
+集成提供 `tplink_lock.query_logs` 动作，用于按页查询 TP-LINK 云端保存的门锁日志。它不会把大量历史日志写入 HA 状态库，查询结果直接显示在开发者工具中，或供自动化和脚本通过响应变量使用。
+
+### 在开发者工具中查询
+
+1. 打开 **开发者工具 → 动作**，选择 `tplink_lock.query_logs`。
+2. 从门锁设备下的诊断实体 **云端设备 ID** 复制 ID，填写 `device_id`。
+3. 首次查询只需填写设备 ID 和每页数量，例如：
+
+```yaml
+device_id: YOUR_CLOUD_DEVICE_ID
+limit: 50
+```
+
+执行后在页面下方的响应区域查看结果。每条日志同时包含原始毫秒时间戳 `logCreateTime` 和按 HA 时区格式化的 `logCreateTimeFormatted`。
+
+### 按日期查询
+
+使用本地日期作为倒序查询边界：
+
+```yaml
+device_id: YOUR_CLOUD_DEVICE_ID
+date: "2026-10-25"
+limit: 50
+```
+
+`date` 会查询该日期结束时刻及更早的日志，不能与 `end_time` 同时填写。`end_time` 用于需要精确指定上限的场景，单位为 Unix 毫秒时间戳。
+
+### 查询下一页
+
+响应中的 `next_page` 包含下一页所需的游标。将其 `start` 和 `last_log_id` 填入下一次查询即可继续获取更早日志：
+
+```yaml
+device_id: YOUR_CLOUD_DEVICE_ID
+start: 1792748206000
+last_log_id: YOUR_LAST_LOG_ID
+limit: 50
+```
+
+在自动化或脚本中调用时，增加 `response_variable` 可保存响应：
+
+```yaml
+- action: tplink_lock.query_logs
+  data:
+    device_id: YOUR_CLOUD_DEVICE_ID
+    limit: 50
+  response_variable: log_page
+```
+
+随后可通过 `log_page.logs` 读取日志列表，通过 `log_page.next_page` 取得下一页游标。
 
 ## 自动化示例
 

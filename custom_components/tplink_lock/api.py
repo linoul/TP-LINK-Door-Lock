@@ -265,14 +265,27 @@ class TPLinkCloudClient:
              "moduleSectionInfo": {"dev_manager": {"name": ["dev_status"]}}},
         )
 
+    def get_log_page(self, limit: int = 50, start: int = -1,
+                     end_time: int | None = None,
+                     last_log_id: str | None = None,
+                     direction: str = "desc") -> list[dict[str, Any]]:
+        """获取一页日志；后续页使用上一页最后一条的时间和 logId。"""
+        payload: dict[str, Any] = {
+            "deviceId": self.device_id,
+            "start": start,
+            "limit": limit,
+            "direction": direction,
+        }
+        if end_time is not None:
+            payload["end"] = end_time
+        if last_log_id:
+            payload["lastLogId"] = last_log_id
+        result = self._request("getDeviceLogByPage", payload)
+        return result.get("deviceLogInfos") or []
+
     def get_logs(self, limit: int = 10) -> list[dict[str, Any]]:
         """取最新日志（desc）。"""
-        result = self._request(
-            "getDeviceLogByPage",
-            {"deviceId": self.device_id, "start": -1, "end": -1,
-             "limit": limit, "direction": "desc"},
-        )
-        return result.get("deviceLogInfos") or []
+        return self.get_log_page(limit=limit, end_time=-1)
 
     # ------------------------------------------------------------------ 诊断
     def async_get_diagnostic_info(self) -> dict[str, Any]:

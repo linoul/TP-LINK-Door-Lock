@@ -91,6 +91,7 @@ class TPLinkLockEventEntity(EventEntity):
             name=coordinator.device_name,
             manufacturer="TP-LINK",
             model="TL-SL41",
+            serial_number=device_id,
             entry_type=DeviceEntryType.SERVICE,
         )
         self._attr_unique_id = "%s_events" % device_id

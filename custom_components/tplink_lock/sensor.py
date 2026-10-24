@@ -34,6 +34,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
     async_add_entities([
+        TPLinkCloudDeviceIdSensor(coordinator, entry, "cloud_device_id"),
         TPLinkBatterySensor(coordinator, entry, "battery"),
         TPLinkLockStateSensor(coordinator, entry, "lock_state"),
         TPLinkLastEventSensor(coordinator, entry, "last_event"),
@@ -48,6 +49,7 @@ class TPLinkLockEntity(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, entry: ConfigEntry, suffix: str) -> None:
         super().__init__(coordinator)
         device_id = entry.data["device_id"]
+        self._device_id = device_id
         # unique_id 是实体挂到设备的必要条件
         self._attr_unique_id = "%s_%s" % (device_id, suffix)
         self._attr_device_info = DeviceInfo(
@@ -55,6 +57,7 @@ class TPLinkLockEntity(CoordinatorEntity, SensorEntity):
             name=coordinator.device_name,
             manufacturer="TP-LINK",
             model="TL-SL41",
+            serial_number=device_id,
             entry_type=DeviceEntryType.SERVICE,
         )
 
@@ -62,6 +65,18 @@ class TPLinkLockEntity(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         # 有过一次成功数据就一直保持可用（失败时显示旧值，而不是变不可用）
         return self.coordinator.data is not None
+
+
+class TPLinkCloudDeviceIdSensor(TPLinkLockEntity):
+    """云端设备 ID，供日志查询等高级操作复制使用。"""
+
+    _attr_name = "云端设备 ID"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:identifier"
+
+    @property
+    def native_value(self) -> str:
+        return self._device_id
 
 
 class TPLinkBatterySensor(TPLinkLockEntity):
