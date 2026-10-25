@@ -10,7 +10,12 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .api import TPLinkAuthError, TPLinkCloudClient, TPLinkCloudError
+from .api import (
+    TPLinkAuthError,
+    TPLinkCloudClient,
+    TPLinkCloudError,
+    TPLinkSmsRequiredError,
+)
 from .const import CONF_DEVICE_ID, CONF_TERMINAL_UUID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,6 +26,13 @@ STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required("username"): str,
         vol.Required("password"): str,
+    }
+)
+
+STEP_SMS_SCHEMA = vol.Schema(
+    {
+        vol.Required("code"): str,
+        vol.Optional("resend", default=False): bool,
     }
 )
 
@@ -63,6 +75,21 @@ class TPLinkLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.hass.async_add_executor_job(client.login)
                 devices = await self.hass.async_add_executor_job(
                     client.get_device_list)
+            except TPLinkSmsRequiredError:
+                self._username = username
+                self._password = password
+                self._terminal_uuid = terminal_uuid
+                try:
+                    await self.hass.async_add_executor_job(
+                        client.request_terminal_bind_veri_code)
+                except TPLinkAuthError as err:
+                    errors["base"] = "sms_send_failed"
+                    _LOGGER.warning("短信验证码发送失败: %s", err)
+                except TPLinkCloudError as err:
+                    errors["base"] = "cannot_connect"
+                    _LOGGER.warning("发送短信验证码时连接失败: %s", err)
+                else:
+                    return await self.async_step_sms()
             except TPLinkAuthError as err:
                 if "上限" in str(err):
                     errors["base"] = "terminal_limit"
@@ -95,6 +122,59 @@ class TPLinkLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_sms(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """验证新终端绑定所需的短信验证码。"""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            client = TPLinkCloudClient(
+                username=self._username,
+                password=self._password,
+                terminal_uuid=self._terminal_uuid,
+            )
+            if user_input.get("resend"):
+                try:
+                    await self.hass.async_add_executor_job(
+                        client.request_terminal_bind_veri_code)
+                except TPLinkAuthError as err:
+                    errors["base"] = "sms_send_failed"
+                    _LOGGER.warning("短信验证码重发失败: %s", err)
+                except TPLinkCloudError as err:
+                    errors["base"] = "cannot_connect"
+                    _LOGGER.warning("重发短信验证码时连接失败: %s", err)
+            else:
+                code = user_input["code"].strip()
+                if not code:
+                    errors["base"] = "invalid_code"
+                else:
+                    try:
+                        await self.hass.async_add_executor_job(client.login, code)
+                        devices = await self.hass.async_add_executor_job(
+                            client.get_device_list)
+                    except TPLinkAuthError as err:
+                        errors["base"] = "invalid_code"
+                        _LOGGER.warning("短信验证码验证失败: %s", err)
+                    except TPLinkCloudError as err:
+                        errors["base"] = "cannot_connect"
+                        _LOGGER.warning("短信验证码验证时连接失败: %s", err)
+                    else:
+                        locks = [
+                            d for d in devices
+                            if d.get("deviceType") == LOCK_DEVICE_TYPE
+                        ]
+                        if not locks:
+                            errors["base"] = "no_locks"
+                        else:
+                            self._locks = locks
+                            return await self.async_step_device()
+
+        return self.async_show_form(
+            step_id="sms",
+            data_schema=STEP_SMS_SCHEMA,
             errors=errors,
         )
 

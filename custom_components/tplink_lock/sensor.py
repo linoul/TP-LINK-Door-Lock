@@ -18,6 +18,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -33,10 +34,19 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
+    device_id = entry.data["device_id"]
+    # 1.5.1 起云端设备 ID 直接使用设备序列号展示，清理旧的重复实体。
+    entity_registry = er.async_get(hass)
+    old_entity_id = entity_registry.async_get_entity_id(
+        "sensor", DOMAIN, "%s_cloud_device_id" % device_id
+    )
+    if old_entity_id:
+        entity_registry.async_remove(old_entity_id)
     async_add_entities([
         TPLinkBatterySensor(coordinator, entry, "battery"),
         TPLinkLockStateSensor(coordinator, entry, "lock_state"),
         TPLinkLastEventSensor(coordinator, entry, "last_event"),
+        TPLinkTodayOpenRecordsSensor(coordinator, entry, "today_open_records"),
     ])
 
 
@@ -55,6 +65,7 @@ class TPLinkLockEntity(CoordinatorEntity, SensorEntity):
             name=coordinator.device_name,
             manufacturer="TP-LINK",
             model="TL-SL41",
+            serial_number=device_id,
             entry_type=DeviceEntryType.SERVICE,
         )
 
@@ -158,4 +169,37 @@ class TPLinkLastEventSensor(TPLinkLockEntity):
             "时间": datetime.fromtimestamp(ts / 1000).strftime(
                 "%Y-%m-%d %H:%M:%S") if ts else None,
             "logId": recent.get("logId"),
+        }
+
+
+class TPLinkTodayOpenRecordsSensor(TPLinkLockEntity):
+    """当天开门次数及最近开门记录。"""
+
+    _attr_name = "今日开门记录"
+    _attr_icon = "mdi:door-open"
+
+    @property
+    def native_value(self) -> int | None:
+        data = self.coordinator.data or {}
+        count = data.get("today_open_count")
+        return int(count) if count is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        records = data.get("today_open_records") or []
+        formatted_records = [self._format_record(record) for record in records]
+        return {
+            "查询时间": data.get("today_records_refreshed_at"),
+            "最近记录": formatted_records[0] if formatted_records else None,
+            "开门记录": formatted_records,
+        }
+
+    def _format_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        formatted_time = self.coordinator.format_log_time(record)
+        return {
+            "时间": formatted_time,
+            "内容": record.get("logContent"),
+            "类型": EVENT_TYPE_LABELS.get(classify_log(record), "开门"),
+            "logId": record.get("logId"),
         }

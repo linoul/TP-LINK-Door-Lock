@@ -1,0 +1,48 @@
+query_logs:
+  name: 查询日志分页
+  description: >-
+    查询一页门锁云端日志。响应包含日志内容和查询更早记录所需的分页游标，
+    可在自动化或脚本中通过 response_variable 使用返回数据。
+  fields:
+    device_id:
+      name: 云端设备 ID
+      description: 此集成为该门锁保存的云端设备 ID，可从设备信息的“序列号”复制。
+      required: true
+      selector:
+        text:
+    date:
+      name: 查询日期
+      description: >-
+        可选，本地日期，格式为 YYYY-MM-DD。查询该日期结束时刻及更早的日志；
+        不能与 end_time 同时填写。
+      selector:
+        text:
+    end_time:
+      name: 结束时间
+      description: >-
+        可选，查询时间上限，使用 Unix 毫秒时间戳且不包含该时刻；
+        不能与 date 同时填写。
+      selector:
+        number:
+          min: 0
+          mode: box
+    limit:
+      name: 每页数量
+      description: 本次查询返回的日志数量，范围为 1 到 100，默认 50。
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+    start:
+      name: 分页游标时间
+      description: >-
+        上一次响应 next_page 中的 start。默认 -1，表示从最新日志开始查询。
+      selector:
+        number:
+          mode: box
+    last_log_id:
+      name: 分页游标日志 ID
+      description: 上一次响应 next_page 中的 last_log_id。
+      selector:
+        text:

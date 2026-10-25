@@ -51,6 +51,10 @@ class TPLinkAuthError(TPLinkCloudError):
     """认证失败（密码错误/需要短信验证码）。"""
 
 
+class TPLinkSmsRequiredError(TPLinkAuthError):
+    """新终端需要短信验证码完成绑定。"""
+
+
 class TPLinkApiError(TPLinkCloudError):
     """接口返回非 0 error_code。"""
 
@@ -82,12 +86,14 @@ def _describe_net_error(err: Exception) -> str:
 
 
 def secure_login_body(username: str, password: str, terminal_uuid: str,
-                      terminal_name: str = "HomeAssistant") -> str:
+                      terminal_name: str = "HomeAssistant",
+                      terminal_bind_code: str = "") -> str:
     """SecureLoginBean 的 Gson 序列化（字段按字母序，空串保留）。"""
     return ('{"appType":"%s","cloudPassword":"%s","cloudUserName":"%s",'
-            '"refreshTokenNeeded":true,"terminalBindCode":"",'
+            '"refreshTokenNeeded":true,"terminalBindCode":"%s",'
             '"terminalName":"%s","terminalUUID":"%s"}'
-            % (APP_TYPE, password, username, terminal_name, terminal_uuid))
+            % (APP_TYPE, password, username, terminal_bind_code,
+               terminal_name, terminal_uuid))
 
 
 class TPLinkCloudClient:
@@ -168,10 +174,27 @@ class TPLinkCloudClient:
         raise TPLinkCloudError("%s 重试后仍失败" % action)
 
     # ------------------------------------------------------------------ 登录
-    def login(self) -> dict[str, Any]:
+    def request_terminal_bind_veri_code(self) -> None:
+        """向新终端绑定手机号发送短信验证码。"""
+        data = self._post(
+            "getMobileVC4TerminalBind",
+            {
+                "appType": APP_TYPE,
+                "cloudPassword": self._password,
+                "cloudUserName": self._username,
+                "terminalUUID": self._terminal_uuid,
+            },
+            None,
+        )
+        if data.get("error_code") != ERR_OK:
+            raise TPLinkAuthError(
+                "短信验证码发送失败 error_code=%s" % data.get("error_code"))
+
+    def login(self, terminal_bind_code: str = "") -> dict[str, Any]:
         """secureLogin：返回 result（含 token / refreshToken）。"""
         body = secure_login_body(self._username, self._password,
-                                 self._terminal_uuid)
+                                 self._terminal_uuid,
+                                 terminal_bind_code=terminal_bind_code)
         path = "biz/v1/secureLogin?%s" % CLIENT_INFO_QUERY
         extra = _extra_info(None, self._term_id)
         body_b = body.encode("utf-8")
@@ -218,8 +241,7 @@ class TPLinkCloudClient:
             raise TPLinkAuthError(
                 "绑定终端数量已达上限，请在 TP-LINK 物联 App 账号安全中删除旧终端")
         if err == ERR_NEED_SMS:
-            raise TPLinkAuthError(
-                "新终端需要短信验证：请在 App 的账号安全中关闭终端绑定")
+            raise TPLinkSmsRequiredError("新终端需要短信验证")
         if err != ERR_OK:
             raise TPLinkAuthError("登录失败 error_code=%s" % err)
         result = data["result"]
@@ -243,14 +265,27 @@ class TPLinkCloudClient:
              "moduleSectionInfo": {"dev_manager": {"name": ["dev_status"]}}},
         )
 
+    def get_log_page(self, limit: int = 50, start: int = -1,
+                     end_time: int | None = None,
+                     last_log_id: str | None = None,
+                     direction: str = "desc") -> list[dict[str, Any]]:
+        """获取一页日志；后续页使用上一页最后一条的时间和 logId。"""
+        payload: dict[str, Any] = {
+            "deviceId": self.device_id,
+            "start": start,
+            "limit": limit,
+            "direction": direction,
+        }
+        if end_time is not None:
+            payload["end"] = end_time
+        if last_log_id:
+            payload["lastLogId"] = last_log_id
+        result = self._request("getDeviceLogByPage", payload)
+        return result.get("deviceLogInfos") or []
+
     def get_logs(self, limit: int = 10) -> list[dict[str, Any]]:
         """取最新日志（desc）。"""
-        result = self._request(
-            "getDeviceLogByPage",
-            {"deviceId": self.device_id, "start": -1, "end": -1,
-             "limit": limit, "direction": "desc"},
-        )
-        return result.get("deviceLogInfos") or []
+        return self.get_log_page(limit=limit, end_time=-1)
 
     # ------------------------------------------------------------------ 诊断
     def async_get_diagnostic_info(self) -> dict[str, Any]:

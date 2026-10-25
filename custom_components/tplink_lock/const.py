@@ -5,6 +5,14 @@ DOMAIN = "tplink_lock"
 CONF_DEVICE_ID = "device_id"
 CONF_TERMINAL_UUID = "terminal_uuid"
 
+SERVICE_QUERY_LOGS = "query_logs"
+ATTR_DATE = "date"
+ATTR_DIRECTION = "direction"
+ATTR_END_TIME = "end_time"
+ATTR_LAST_LOG_ID = "last_log_id"
+ATTR_LIMIT = "limit"
+ATTR_START = "start"
+
 # 轮询间隔（秒）：日志高频轮询；状态/电量每 4 个周期刷一次
 DEFAULT_SCAN_INTERVAL = 15
 
