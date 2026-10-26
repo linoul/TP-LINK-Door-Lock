@@ -9,12 +9,19 @@
           "password": "密码"
         }
       },
+      "sms": {
+        "title": "输入短信验证码",
+        "description": "该账号开启了终端绑定（登录安全设置），验证码已发送至账号绑定的手机号。请输入 6 位验证码继续；如需重新发送，勾选「重新发送验证码」后提交（{{ cooldown }} 秒冷却）。",
+        "data": {
+          "sms_code": "短信验证码（勾选重新发送时可不填）",
+          "resend": "重新发送验证码"
+        }
+      },
       "device": {
         "title": "选择门锁",
-        "description": "账号下检测到以下门锁：\n\n{{ locks }}",
+        "description": "账号下检测到以下门锁，可多选：\n\n{{ locks }}",
         "data": {
-          "device_id": "门锁",
-          "device_name": "设备名称（可选，默认用 App 里的别名）"
+          "devices": "选择门锁（可多选，一个条目可管理多把锁）"
         }
       }
     },
@@ -22,7 +29,15 @@
       "invalid_auth": "登录失败：请检查账号密码；若提示需要短信验证，请先在 TP-LINK 物联 App 上登录一次该账号",
       "cannot_connect": "无法连接 TP-LINK 云端，请稍后重试",
       "no_locks": "该账号下未发现门锁设备（TL-SL41），请确认门锁已绑定的账号",
-      "terminal_limit": "账号绑定终端数量已达上限：请在 TP-LINK 物联 App「账号与安全 → 登录设备管理」中删除旧设备后重试"
+      "terminal_limit": "账号绑定终端数量已达上限：请在 TP-LINK 物联 App「账号与安全 → 登录设备管理」中删除旧设备后重试",
+      "invalid_code": "验证码错误，请检查后重试",
+      "required": "请输入验证码",
+      "sms_cooldown": "请稍候再重新发送（冷却中）",
+      "sms_resent": "验证码已重新发送，请查收短信",
+      "need_sms_reconfig": "新账号需要短信验证：请删除本集成后重新添加（配置向导内含短信验证步骤）",
+      "already_configured": "该门锁已被其他条目配置",
+      "no_new_locks": "账号下所有门锁均已添加",
+      "cannot_remove_last": "至少需要保留一把门锁；如需全部移除，请删除整个集成条目"
     },
     "abort": {
       "already_configured": "该门锁已配置"
@@ -32,10 +47,50 @@
     "step": {
       "init": {
         "title": "TP-LINK 门锁选项",
+        "menu_options": {
+          "interval": "轮询间隔",
+          "login": "修改登录信息（账号/密码）",
+          "add_device": "添加门锁",
+          "remove_device": "去除门锁"
+        }
+      },
+      "interval": {
+        "title": "轮询间隔",
         "data": {
           "scan_interval": "轮询间隔（秒）"
         }
+      },
+      "login": {
+        "title": "修改登录信息",
+        "description": "修改 TP-LINK 物联账号。切换到新账号时会自动绑定新终端，若该账号开启了登录安全设置，需要短信验证——请删除本集成后重新添加（配置向导支持短信步骤）。",
+        "data": {
+          "username": "TP-LINK 账号（手机号/邮箱）",
+          "password": "密码"
+        }
+      },
+      "add_device": {
+        "title": "添加门锁",
+        "description": "账号下尚未添加的门锁：\n\n{{ locks }}",
+        "data": {
+          "devices": "选择要添加的门锁（可多选）"
+        }
+      },
+      "remove_device": {
+        "title": "去除门锁",
+        "description": "已配置的门锁：\n\n{{ locks }}\n\n移除后其实体将变为孤立实体，可在实体页面手动删除。",
+        "data": {
+          "device_id": "要移除的门锁"
+        }
       }
+    },
+    "error": {
+      "invalid_auth": "账号或密码错误",
+      "terminal_limit": "该账号绑定终端数量已达上限，请在 App 中解绑其他终端后重试",
+      "cannot_connect": "无法连接 TP-LINK 云端，请稍后重试",
+      "need_sms_reconfig": "该账号需要短信验证，请在选项流之外重新添加集成（配置向导支持短信步骤）",
+      "no_new_locks": "账号下没有可添加的门锁（已全部添加）",
+      "cannot_remove_last": "至少需保留一把门锁；如需更换请删除本集成后重新添加",
+      "required": "请至少选择一项"
     }
   },
   "entity": {

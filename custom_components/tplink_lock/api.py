@@ -29,6 +29,7 @@ from .const import (
     CLIENT_INFO_QUERY,
     CONN,
     CT,
+    ERR_CODE_INVALID,
     ERR_NEED_SMS,
     ERR_OK,
     ERR_TERMINAL_LIMIT,
@@ -49,6 +50,18 @@ class TPLinkCloudError(Exception):
 
 class TPLinkAuthError(TPLinkCloudError):
     """认证失败（密码错误/需要短信验证码）。"""
+
+
+class TPLinkNeedSmsError(TPLinkAuthError):
+    """新终端需短信验证码绑定（-23024），携带终端 UUID 供发码使用。"""
+
+    def __init__(self, message: str, terminal_uuid: str = "") -> None:
+        super().__init__(message)
+        self.terminal_uuid = terminal_uuid
+
+
+class TPLinkSmsCodeError(TPLinkAuthError):
+    """提交的短信验证码错误（-20607）。"""
 
 
 class TPLinkApiError(TPLinkCloudError):
@@ -82,12 +95,14 @@ def _describe_net_error(err: Exception) -> str:
 
 
 def secure_login_body(username: str, password: str, terminal_uuid: str,
+                      terminal_bind_code: str = "",
                       terminal_name: str = "HomeAssistant") -> str:
     """SecureLoginBean 的 Gson 序列化（字段按字母序，空串保留）。"""
     return ('{"appType":"%s","cloudPassword":"%s","cloudUserName":"%s",'
-            '"refreshTokenNeeded":true,"terminalBindCode":"",'
+            '"refreshTokenNeeded":true,"terminalBindCode":"%s",'
             '"terminalName":"%s","terminalUUID":"%s"}'
-            % (APP_TYPE, password, username, terminal_name, terminal_uuid))
+            % (APP_TYPE, password, username, terminal_bind_code,
+               terminal_name, terminal_uuid))
 
 
 class TPLinkCloudClient:
@@ -168,10 +183,13 @@ class TPLinkCloudClient:
         raise TPLinkCloudError("%s 重试后仍失败" % action)
 
     # ------------------------------------------------------------------ 登录
-    def login(self) -> dict[str, Any]:
-        """secureLogin：返回 result（含 token / refreshToken）。"""
+    def login(self, terminal_bind_code: str = "") -> dict[str, Any]:
+        """secureLogin：返回 result（含 token / refreshToken）。
+
+        terminal_bind_code 非空时随登录提交（新终端短信绑定，-23024 场景）。
+        """
         body = secure_login_body(self._username, self._password,
-                                 self._terminal_uuid)
+                                 self._terminal_uuid, terminal_bind_code)
         path = "biz/v1/secureLogin?%s" % CLIENT_INFO_QUERY
         extra = _extra_info(None, self._term_id)
         body_b = body.encode("utf-8")
@@ -218,14 +236,71 @@ class TPLinkCloudClient:
             raise TPLinkAuthError(
                 "绑定终端数量已达上限，请在 TP-LINK 物联 App 账号安全中删除旧终端")
         if err == ERR_NEED_SMS:
-            raise TPLinkAuthError(
-                "新终端需要短信验证：请在 App 的账号安全中关闭终端绑定")
+            raise TPLinkNeedSmsError(
+                "新终端需要短信验证：请绑定该终端后重试", self._terminal_uuid)
+        if err == ERR_CODE_INVALID:
+            raise TPLinkSmsCodeError("验证码错误")
         if err != ERR_OK:
             raise TPLinkAuthError("登录失败 error_code=%s" % err)
         result = data["result"]
         self._token = result["token"]
         _LOGGER.debug("secureLogin 成功, token=%s...", self._token[:16])
         return result
+
+    def send_terminal_verify_code(self) -> None:
+        """发送终端绑定短信验证码（-23024 后调用，登录前场景无需 token）。
+
+        接口名取自 App 反编译：sb/i.smali 调用点布尔参数为 false，
+        对应 getMobileVC4TerminalBind（非 getMobileVC4TerminalVerify）。
+        """
+        data = self._post(
+            "getMobileVC4TerminalBind",
+            {"appType": APP_TYPE,
+             "cloudPassword": self._password,
+             "cloudUserName": self._username,
+             "terminalUUID": self._terminal_uuid},
+            None)
+        err = data.get("error_code")
+        if err == ERR_NEED_SMS:
+            # 账号未开启终端绑定时也会走到这里：无需验证码
+            raise TPLinkAuthError("账号未开启终端绑定，无需短信验证")
+        if err != ERR_OK:
+            raise TPLinkCloudError(
+                "发送验证码失败 error_code=%s" % err)
+        _LOGGER.debug("终端绑定验证码已发送至绑定手机")
+
+    def check_security_veri_code(self, veri_code: str,
+                                 verify_type: int = 1) -> None:
+        """校验终端绑定短信验证码（App 同款两步路径的第一步）。
+
+        通过后该终端即被标记为已验证，随后的普通 secureLogin 即可通过。
+        """
+        data = self._post(
+            "checkSecurityVeriCode",
+            {"terminalUUID": self._terminal_uuid,
+             "veriCode": veri_code,
+             "verifyType": verify_type},
+            self._token)
+        err = data.get("error_code")
+        if err == ERR_CODE_INVALID:
+            raise TPLinkSmsCodeError("验证码错误")
+        if err == ERR_TOKEN_INVALID and self._token:
+            # token 失效：先重登再重试一次（-23024 场景本就没有 token，
+            # 此分支主要覆盖已登录态下调用的场景）
+            self.login()
+            data = self._post(
+                "checkSecurityVeriCode",
+                {"terminalUUID": self._terminal_uuid,
+                 "veriCode": veri_code,
+                 "verifyType": verify_type},
+                self._token)
+            err = data.get("error_code")
+            if err == ERR_CODE_INVALID:
+                raise TPLinkSmsCodeError("验证码错误")
+        if err != ERR_OK:
+            raise TPLinkCloudError(
+                "验证码校验失败 error_code=%s" % err)
+        _LOGGER.debug("终端绑定验证码校验通过")
 
     # ------------------------------------------------------------------ 接口
     def get_device_list(self) -> list[dict[str, Any]]:

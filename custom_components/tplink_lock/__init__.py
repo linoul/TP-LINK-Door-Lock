@@ -10,7 +10,13 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 
 from .api import TPLinkAuthError, TPLinkCloudClient, TPLinkCloudError
-from .const import CONF_DEVICE_ID, CONF_TERMINAL_UUID, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    CONF_DEVICES,
+    CONF_DEVICE_ID,
+    CONF_TERMINAL_UUID,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 from .coordinator import TPLinkLockCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +54,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _attach_file_logger(hass)
     _LOGGER.debug("async_setup_entry 开始 entry_id=%s data_keys=%s",
                   entry.entry_id, list(entry.data))
+    # 旧版本迁移：单 device_id -> devices 列表（多门锁支持）
+    if CONF_DEVICES not in entry.data:
+        new_data = dict(entry.data)
+        new_data[CONF_DEVICES] = [{
+            "device_id": entry.data[CONF_DEVICE_ID],
+            "device_name": entry.data.get("device_name", ""),
+        }]
+        hass.config_entries.async_update_entry(entry, data=new_data)
+        _LOGGER.info("已迁移旧条目格式：单设备 -> 多设备列表")
+        # 更新后 entry 对象可能失效，重新取
+        entry = hass.config_entries.async_get_entry(entry.entry_id) or entry
     try:
         return await _async_setup_entry(hass, entry)
     except ConfigEntryNotReady as err:
@@ -61,11 +78,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
+    devices = entry.data[CONF_DEVICES]
     client = TPLinkCloudClient(
         username=entry.data["username"],
         password=entry.data["password"],
         terminal_uuid=entry.data[CONF_TERMINAL_UUID],
-        device_id=entry.data[CONF_DEVICE_ID],
+        device_id=devices[0]["device_id"],
     )
 
     # 启动时先登录一次，尽早暴露配置错误
@@ -77,12 +95,12 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except TPLinkCloudError as err:
         _LOGGER.warning("TP-LINK 云端暂不可达（将自动重试）: %s", err)
 
-    device_name = entry.data.get("device_name") or entry.data[CONF_DEVICE_ID][-8:]
     poll_interval = entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)
-    coordinator = TPLinkLockCoordinator(hass, client, device_name, poll_interval)
+    coordinator = TPLinkLockCoordinator(hass, client, devices, poll_interval)
     await coordinator.async_config_entry_first_refresh()
-    _LOGGER.debug("首次刷新完成, data keys=%s",
-                  list(coordinator.data) if coordinator.data else None)
+    _LOGGER.debug("首次刷新完成, 设备=%s",
+                  list(coordinator.data.get("devices", {}))
+                  if coordinator.data else None)
 
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,

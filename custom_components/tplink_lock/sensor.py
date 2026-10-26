@@ -1,4 +1,4 @@
-"""TP-LINK 门锁传感器平台。"""
+"""TP-LINK 门锁传感器平台（按账号下所有门锁创建实体）。"""
 from __future__ import annotations
 
 import logging
@@ -20,10 +20,19 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_DEVICES, DOMAIN
 from .event import EVENT_TYPE_LABELS, classify_log
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _devices_of(entry: ConfigEntry) -> list[dict[str, Any]]:
+    """条目下的门锁列表（兼容旧的单 device_id 格式）。"""
+    devices = entry.data.get(CONF_DEVICES)
+    if devices:
+        return list(devices)
+    return [{"device_id": entry.data["device_id"],
+             "device_name": entry.data.get("device_name", "")}]
 
 
 async def async_setup_entry(
@@ -33,30 +42,47 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    async_add_entities([
-        TPLinkBatterySensor(coordinator, entry, "battery"),
-        TPLinkLockStateSensor(coordinator, entry, "lock_state"),
-        TPLinkLastEventSensor(coordinator, entry, "last_event"),
-    ])
+    entities = []
+    for dev in _devices_of(entry):
+        name = dev.get("device_name") or dev["device_id"][-8:]
+        entities.extend([
+            TPLinkBatterySensor(coordinator, dev["device_id"], name,
+                                "battery"),
+            TPLinkLockStateSensor(coordinator, dev["device_id"], name,
+                                  "lock_state"),
+            TPLinkLastEventSensor(coordinator, dev["device_id"], name,
+                                  "last_event"),
+        ])
+    _LOGGER.debug("sensor 平台创建 %d 个实体", len(entities))
+    async_add_entities(entities)
 
 
 class TPLinkLockEntity(CoordinatorEntity, SensorEntity):
-    """公共基类。"""
+    """公共基类：绑定到具体门锁设备。"""
 
     _attr_has_entity_name = True
+    # 子类必须定义；缺省兜底避免漏传参数时整平台加载失败
+    _suffix = "unknown"
 
-    def __init__(self, coordinator, entry: ConfigEntry, suffix: str) -> None:
+    def __init__(self, coordinator, device_id: str, device_name: str,
+                 suffix: str = "") -> None:
         super().__init__(coordinator)
-        device_id = entry.data["device_id"]
+        self._device_id = device_id
         # unique_id 是实体挂到设备的必要条件
-        self._attr_unique_id = "%s_%s" % (device_id, suffix)
+        self._attr_unique_id = "%s_%s" % (device_id, suffix or self._suffix)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
-            name=coordinator.device_name,
+            name=device_name,
             manufacturer="TP-LINK",
             model="TL-SL41",
             entry_type=DeviceEntryType.SERVICE,
         )
+
+    @property
+    def _dev_data(self) -> dict[str, Any]:
+        """本设备在协调器数据里的分片。"""
+        return (self.coordinator.data or {}).get("devices", {}).get(
+            self._device_id, {})
 
     @property
     def available(self) -> bool:
@@ -68,6 +94,7 @@ class TPLinkBatterySensor(TPLinkLockEntity):
     """门锁电量。"""
 
     _attr_name = "电量"
+    _suffix = "battery"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -75,7 +102,7 @@ class TPLinkBatterySensor(TPLinkLockEntity):
 
     @property
     def native_value(self) -> int | None:
-        cfg = self.coordinator.data.get("config") or {}
+        cfg = self._dev_data.get("config") or {}
         try:
             return int(cfg["config"]["dev_manager"]["dev_status"]["power_level"])
         except (KeyError, TypeError, ValueError):
@@ -83,7 +110,7 @@ class TPLinkBatterySensor(TPLinkLockEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        cfg = self.coordinator.data.get("config") or {}
+        cfg = self._dev_data.get("config") or {}
         try:
             ds = cfg["config"]["dev_manager"]["dev_status"]
             return {
@@ -99,6 +126,7 @@ class TPLinkLockStateSensor(TPLinkLockEntity):
     """门锁状态（原始值 + 中文说明）。"""
 
     _attr_name = "门锁状态"
+    _suffix = "lock_state"
 
     # 权威映射：反编译 SmartLockStatus.getLockStatusDesc() + res 字符串
     LOCK_STATUS = {
@@ -115,7 +143,7 @@ class TPLinkLockStateSensor(TPLinkLockEntity):
 
     @property
     def native_value(self) -> str | None:
-        cfg = self.coordinator.data.get("config") or {}
+        cfg = self._dev_data.get("config") or {}
         try:
             raw = str(cfg["config"]["dev_manager"]["dev_status"]["lock_status"])
         except (KeyError, TypeError):
@@ -124,7 +152,7 @@ class TPLinkLockStateSensor(TPLinkLockEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        cfg = self.coordinator.data.get("config") or {}
+        cfg = self._dev_data.get("config") or {}
         try:
             raw = str(cfg["config"]["dev_manager"]["dev_status"]["lock_status"])
         except (KeyError, TypeError):
@@ -132,22 +160,22 @@ class TPLinkLockStateSensor(TPLinkLockEntity):
         return {"原始值": raw, "告警": raw in self.WARNING_STATUS}
 
 
-
 class TPLinkLastEventSensor(TPLinkLockEntity):
     """最近一条事件：状态直接显示事件内容（谁、用什么方式开门等）。"""
 
     _attr_name = "最近事件"
+    _suffix = "last_event"
 
     @property
     def native_value(self) -> str | None:
-        recent = (self.coordinator.data or {}).get("last_log")
+        recent = self._dev_data.get("last_log")
         if not recent:
             return None
         return recent.get("logContent") or None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        recent = (self.coordinator.data or {}).get("last_log")
+        recent = self._dev_data.get("last_log")
         if not recent:
             return {}
         etype = classify_log(recent)

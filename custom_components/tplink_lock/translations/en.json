@@ -9,12 +9,19 @@
           "password": "Password"
         }
       },
+      "sms": {
+        "title": "Enter SMS verification code",
+        "description": "Terminal binding is enabled for this account. A verification code has been sent to the registered phone. Enter the 6-digit code to continue; tick \"Resend code\" and submit to request a new one ({{ cooldown }}s cooldown).",
+        "data": {
+          "sms_code": "SMS code (leave empty when resending)",
+          "resend": "Resend verification code"
+        }
+      },
       "device": {
         "title": "Select door lock",
-        "description": "Locks found under this account:\n\n{{ locks }}",
+        "description": "Locks found under this account (multi-select):\n\n{{ locks }}",
         "data": {
-          "device_id": "Door lock",
-          "device_name": "Device name (optional, defaults to app alias)"
+          "devices": "Select door locks (multi-select; one entry can manage multiple locks)"
         }
       }
     },
@@ -22,7 +29,15 @@
       "invalid_auth": "Login failed: check username/password; if SMS verification is required, log in once in the TP-LINK app first",
       "cannot_connect": "Cannot connect to TP-LINK cloud, try again later",
       "no_locks": "No door lock (TL-SL41) found under this account",
-      "terminal_limit": "Terminal limit reached: remove old devices in the TP-LINK app under Account & Security > Login device management, then retry"
+      "terminal_limit": "Terminal limit reached: remove old devices in the TP-LINK app under Account & Security > Login device management, then retry",
+      "invalid_code": "Invalid code, please check and retry",
+      "required": "Please enter the code",
+      "sms_cooldown": "Please wait before requesting a new code",
+      "sms_resent": "Code resent, please check your messages",
+      "need_sms_reconfig": "SMS verification required for the new account: remove this integration and add it again (the config flow supports SMS)",
+      "already_configured": "This lock is already configured by another entry",
+      "no_new_locks": "All locks under this account are already added",
+      "cannot_remove_last": "At least one lock must remain; remove the whole integration entry to remove all"
     },
     "abort": {
       "already_configured": "This lock is already configured"
@@ -32,10 +47,50 @@
     "step": {
       "init": {
         "title": "TP-LINK Door Lock options",
+        "menu_options": {
+          "interval": "Polling interval",
+          "login": "Change login credentials",
+          "add_device": "Add door lock",
+          "remove_device": "Remove door lock"
+        }
+      },
+      "interval": {
+        "title": "Polling interval",
         "data": {
           "scan_interval": "Polling interval (seconds)"
         }
+      },
+      "login": {
+        "title": "Change login credentials",
+        "description": "Change the TP-LINK cloud account. Switching to a new account rebinds the terminal; if that account has login security enabled, SMS verification is required - remove this integration and add it again (the config flow supports SMS).",
+        "data": {
+          "username": "TP-LINK account (phone/email)",
+          "password": "Password"
+        }
+      },
+      "add_device": {
+        "title": "Add door lock",
+        "description": "Locks not yet added:\n\n{{ locks }}",
+        "data": {
+          "devices": "Select locks to add (multi-select)"
+        }
+      },
+      "remove_device": {
+        "title": "Remove door lock",
+        "description": "Configured locks:\n\n{{ locks }}\n\nRemoved locks leave orphaned entities that can be deleted manually.",
+        "data": {
+          "device_id": "Lock to remove"
+        }
       }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "terminal_limit": "Terminal limit reached; unbind another terminal in the app",
+      "cannot_connect": "Cannot connect to TP-LINK cloud, try again later",
+      "need_sms_reconfig": "This account requires SMS verification; remove and re-add the integration (the config wizard supports SMS)",
+      "no_new_locks": "No new locks available (all already added)",
+      "cannot_remove_last": "At least one lock must remain; delete the integration to switch locks",
+      "required": "Select at least one item"
     }
   },
   "entity": {

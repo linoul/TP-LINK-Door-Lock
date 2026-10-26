@@ -12,14 +12,24 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_DEVICES,
+    DOMAIN,
     LOG_TYPE_DOOR,
     LOG_TYPE_DOORBELL,
     LOG_TYPE_LOCK,
     LOG_TYPE_SETTING,
-    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _devices_of(entry) -> list:
+    """条目下的门锁列表（兼容旧的单 device_id 格式）。"""
+    devices = entry.data.get(CONF_DEVICES)
+    if devices:
+        return list(devices)
+    return [{"device_id": entry.data["device_id"],
+             "device_name": entry.data.get("device_name", "")}]
 
 EVENT_TYPE_LABELS = {
     "unlock": "开门",
@@ -71,24 +81,27 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    async_add_entities([TPLinkLockEventEntity(coordinator, entry)])
+    async_add_entities([
+        TPLinkLockEventEntity(coordinator, dev["device_id"],
+                              dev.get("device_name") or dev["device_id"][-8:])
+        for dev in _devices_of(entry)
+    ])
 
 
 class TPLinkLockEventEntity(EventEntity):
-    """门锁事件实体：所有门锁日志事件集中在一个实体。"""
+    """门锁事件实体：对应一把门锁的全部日志事件。"""
 
     _attr_translation_key = "lock_events"
     _attr_has_entity_name = True
     _attr_event_types = EVENT_TYPES
 
-    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator, device_id: str, device_name: str) -> None:
         super().__init__()
         self._coordinator = coordinator
-        self._entry = entry
-        device_id = entry.data["device_id"]
+        self._device_id = device_id
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
-            name=coordinator.device_name,
+            name=device_name,
             manufacturer="TP-LINK",
             model="TL-SL41",
             entry_type=DeviceEntryType.SERVICE,
@@ -99,19 +112,22 @@ class TPLinkLockEventEntity(EventEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         # 重放最近 15 分钟内的最后一条日志，避免事件实体长期"未知"
-        last = (self._coordinator.data or {}).get("last_log")
+        last = (self._coordinator.data or {}).get(
+            "devices", {}).get(self._device_id, {}).get("last_log")
         if last:
             age = time.time() * 1000 - (last.get("logCreateTime") or 0)
             if 0 <= age < 15 * 60 * 1000:
-                self._handle_logs([last])
+                self._handle_logs(self._device_id, [last])
 
     @callback
-    def _handle_logs(self, logs: list[dict[str, Any]]) -> None:
-        """协调器收到新日志时触发事件。"""
+    def _handle_logs(self, device_id: str, logs: list[dict[str, Any]]) -> None:
+        """协调器收到新日志时触发事件（只处理本设备的）。"""
+        if device_id != self._device_id:
+            return
         for log in logs:
             event_type = classify_log(log)
-            _LOGGER.info("门锁事件: [%s] %s", event_type,
-                         log.get("logContent"))
+            _LOGGER.info("门锁事件(%s): [%s] %s", self._device_id[-6:],
+                         event_type, log.get("logContent"))
             self._trigger_event(
                 event_type,
                 {

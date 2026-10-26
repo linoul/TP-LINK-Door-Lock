@@ -3,6 +3,7 @@
 DOMAIN = "tplink_lock"
 
 CONF_DEVICE_ID = "device_id"
+CONF_DEVICES = "devices"          # 多门锁列表 [{"device_id", "device_name"}]
 CONF_TERMINAL_UUID = "terminal_uuid"
 
 # 轮询间隔（秒）：日志高频轮询；状态/电量每 4 个周期刷一次
@@ -31,6 +32,7 @@ ERR_OK = 0
 ERR_TOKEN_INVALID = -20651       # 登录超时/会话失效 -> 重新 secureLogin
 ERR_TERMINAL_LIMIT = -23027      # 绑定终端数量上限
 ERR_NEED_SMS = -23024            # 新终端需短信验证（terminalBindCode）
+ERR_CODE_INVALID = -20607        # 短信验证码错误
 
 # 门锁日志类型（frida 抓包分析）
 LOG_TYPE_LOCK = 1        # 开关锁操作
