@@ -1,6 +1,6 @@
 # TP-LINK Door Lock (Home Assistant 自定义集成)
 
-把 **TP-LINK TL-SL41 智能门锁**接入 Home Assistant。走 TP-LINK 物联云 API。
+把 **TP-LINK TL-SL41 / TL-SL42 Pro 智能门锁**接入 Home Assistant。走 TP-LINK 物联云 API。
 
 > ⚠️ 非官方集成。TP-LINK 未公开此 API，接口随时可能变更。使用风险自负。
 
@@ -8,10 +8,14 @@
 
 | 能力 | 说明 |
 |---|---|
-| 电量 | 电池百分比 + 电池电压/充电状态属性 |
+| 电量 | 干电池电量百分比 + 锂电池电量 + 充电中/低电量；属性带电池电压、锁体电机读数 |
 | 门锁状态 | 正常 / 门锁破坏 / 已上锁 / 门未关 / 门虚掩 / 已开锁 / 门未锁好（映射取自 App 反编译） |
 | 最近事件 | 状态直接显示事件内容，例如「"张三"通过人脸开门成功」 |
-| 事件实体 | 开门 / 上锁 / 门异常 / 门铃 / 验证失败 / 设置变更 / 其他 |
+| 事件实体 | 开门 / 上锁 / 门异常 / 门铃 / 验证失败 / 设置变更 / **逗留 / 防撬 / 远程开锁 / 低电量** / 其他 |
+| **App 设置写回** | 报警音量、开锁提示音、室内响铃音量、室内/室外铃声、人脸验证（开关/模式/灵敏度）、双重验证、撬门告警、待机模式、自动上锁延时、人脸验证间隔 —— 直接改门锁，不用开 App |
+| 统计 | 今日开门次数（带开锁方式分布）、今日事件数、今日门前逗留次数、最近逗留时长/录像大小 |
+| 抓拍图 | 逗留 / 门铃等带图告警自动抓取门前画面，直接当图片卡片或推送到手机 |
+| 诊断 | WiFi 信号/SSID、响铃计划、固件与子模块固件、设备状态（在线/离线） |
 | 配置向导 | 账号密码登录 → 自动列出门锁（可多选），无需手抄 deviceId |
 | 多门锁 | 一个集成条目可管理多把门锁；选项页可随时**添加/去除**门锁 |
 
@@ -41,12 +45,63 @@
 
 ## 实体
 
+### 核心实体（默认可见）
+
 | 实体 | 说明 |
 |---|---|
-| `sensor.<门锁>_电量` | 电池百分比（诊断分类） |
+| `sensor.<门锁>_干电池电量` | 干电池电量百分比；属性：`usb_plugin`、锁体电机读数 |
+| `sensor.<门锁>_锂电池电量` | 二次电池电量（`power_level_li`） |
+| `binary_sensor.<门锁>_充电中` / `_低电量` | USB 供电状态 / 低于 20% 告警 |
 | `sensor.<门锁>_门锁状态` | 中文状态文本；属性：`原始值`、`告警` |
-| `sensor.<门锁>_最近事件` | 最近一条事件内容；属性：`事件类型`、`时间`、`logId` |
-| `event.<门锁>` | 事件实体，供自动化按 `event_type` 触发 |
+| `binary_sensor.<门锁>_已上锁` / `_门锁告警` | 上锁布尔值 / 门异常（破坏、未关、虚掩、未锁好） |
+| `sensor.<门锁>_最近事件` | 最近一条事件内容；属性：`事件类型`、`时间`、`模板ID`、`验证方式`、`抓拍图地址` |
+| `sensor.<门锁>_最近事件时间` | timestamp，可直接做相对时间显示 |
+| `sensor.<门锁>_最近开锁方式` | 人脸 / 指纹 / 密码 / 门卡 / 远程…（`templateId` + `verifyType` 优先，文案兜底） |
+| `sensor.<门锁>_最近门铃时间` | 最近一次门铃呼叫时间 |
+| `sensor.<门锁>_今日开门次数` / `_今日事件数` | 基于最近 50 条云端日志；属性含开锁方式分布、类型分布 |
+| `sensor.<门锁>_最近门前逗留时间` / `_最近逗留时长` / `_今日门前逗留次数` | 逗留侦测（`templateId=96`）统计，属性带抓拍图地址、录像大小 |
+| `binary_sensor.<门锁>_近期告警` / `_近期门前逗留` | 窗口期内是否发生过告警/逗留，可直接用于仪表盘展示 |
+| `image.<门锁>_最近门前抓拍` | 最近一条带图告警的抓拍图（JPEG），可当图片卡片或推送 |
+| `event.<门锁>` | 事件实体；属性含 `event_type`、事件内容、时间、抓拍图地址 |
+
+### 可写实体（直接改门锁设置）
+
+写入走 `setDeviceDesiredConfig`（App 设置页同款接口），改完立即回读刷新。
+
+| 实体 | 取值 |
+|---|---|
+| `switch.<门锁>_撬门告警` / `_双重验证` / `_人脸验证` | 开 / 关 |
+| `select.<门锁>_报警音量` / `_开锁提示音音量` | 高 / 中 / 低 / 静音 |
+| `select.<门锁>_室内响铃音量` | 静音 / 低 / 中 / 高 |
+| `select.<门锁>_室内铃声` / `_室外铃声` | 选项来自设备影子里的铃声库，动态生成 |
+| `select.<门锁>_人脸验证模式` | 普通模式 / 安全模式 |
+| `select.<门锁>_人脸检测灵敏度` | 低 / 中 / 高 |
+| `select.<门锁>_待机模式` | 已关闭 / 长连接 / 节能唤醒 |
+| `number.<门锁>_自动上锁延时` | 0–120 秒 |
+| `number.<门锁>_人脸验证间隔` | 0–120 秒 |
+
+> 云端字段是字符串，集成内部统一转换；写入失败会在前端弹出明确错误，不会静默丢弃。
+
+### 默认隐藏的实体（`entity_registry_enabled_default = False`）
+
+两类：**与可写实体重复的只读镜像**、**纯诊断信息**。接入时即为禁用状态，需要时到
+「设备页 → 实体」手动启用即可，不影响数据。
+
+| 类型 | 实体 |
+|---|---|
+| 重复的只读镜像 | 自动上锁延时（只读）、人脸验证间隔（只读）、人脸验证模式（只读）、人脸检测灵敏度（只读）、待机模式（只读）、人脸验证已开启、双重验证已开启、撬门告警已开启 |
+| 设备信息 | 固件版本（属性含前板/触摸/WiFi/电机板子模块固件、MAC、二维码）、设备型号 |
+| 诊断 | 开锁电机读数、上锁电机读数、WiFi 信号质量、WiFi 网络、响铃计划 |
+
+## 兼容性
+
+| 型号 | 状态 | 说明 |
+|---|---|---|
+| TL-SL41 | ✅ 上游原有能力 | 电量 / 门锁状态 / 最近事件 / 事件实体 |
+| **TL-SL42 Pro** | ✅ 已验证 | 上述全部能力，含猫眼逗留侦测、抓拍图、铃声库、App 设置写回 |
+| 其他 SMARTLOCK 型号 | ⚠️ 未验证 | 影子配置按模块请求并逐级回退，缺失字段的实体显示未知，不会报错 |
+
+设备页的型号 / 固件 / MAC 来自云端 `getDeviceList`，不再硬编码为某个型号。
 
 ### 门锁状态映射
 
@@ -63,71 +118,10 @@
 
 ### 事件类型
 
-`unlock`（开门）、`lock`（上锁）、`door_alarm`（门异常）、`doorbell`（门铃）、`verify_failed`（验证失败）、`setting_change`（设置变更）、`other`。
+`unlock`（开门）、`lock`（上锁）、`door_alarm`（门异常）、`doorbell`（门铃）、`verify_failed`（验证失败）、`setting_change`（设置变更）、`loiter`（逗留）、`tamper`（防撬/破坏）、`remote_unlock`（远程开锁）、`low_battery`（低电量）、`other`。
 
-## 自动化示例
-
-### 有人开门时通知（带成员名）
-
-```yaml
-automation:
-  - alias: 门锁 - 有人开门
-    trigger:
-      - platform: state
-        entity_id: event.hao_shi_you_ting_men_suo
-    condition:
-      - condition: template
-        value_template: "{{ trigger.to_state.attributes.event_type == 'unlock' }}"
-    action:
-      - service: notify.mobile_app_你的手机
-        data:
-          title: 门锁已开启
-          message: "{{ trigger.to_state.attributes.content }}"
-```
-
-### 门未关/虚掩提醒
-
-```yaml
-automation:
-  - alias: 门锁 - 门未关提醒
-    trigger:
-      - platform: state
-        entity_id: sensor.hao_shi_you_ting_men_suo_men_suo_zhuang_tai
-        to: ["门未关", "门虚掩", "门未锁好"]
-        for: "00:02:00"
-    action:
-      - service: notify.mobile_app_你的手机
-        data:
-          message: "门锁状态：{{ states('sensor.hao_shi_you_ting_men_suo_men_suo_zhuang_tai') }}"
-```
-
-### 门铃触发
-
-```yaml
-automation:
-  - alias: 门锁 - 门铃
-    trigger:
-      - platform: state
-        entity_id: event.hao_shi_you_ting_men_suo
-    condition:
-      - condition: template
-        value_template: "{{ trigger.to_state.attributes.event_type == 'doorbell' }}"
-    action:
-      - service: tts.speak
-        target:
-          entity_id: media_player.客厅音箱
-        data:
-          message: 有人按门铃
-```
-
-### 低电量
-
-```yaml
-trigger:
-  - platform: numeric_state
-    entity_id: sensor.hao_shi_you_ting_men_suo_dian_liang
-    below: 20
-```
+> SL42 Pro 的云端日志带结构化字段 `templateId` / `verifyType`，集成优先按它们归类，
+> 未知模板再回退到中文关键词匹配，因此老型号的事件归类不受影响。
 
 ## 选项
 
@@ -162,6 +156,7 @@ logger:
 ## 已知限制
 
 - **非实时**：门锁事件依赖云端轮询，延迟约为轮询间隔（默认 15 秒）。App 的实时推送走厂商推送通道（MiPush/HMS），无第三方可订阅接口。
+- **无实时视频**：SL42 Pro 的猫眼预览走 App 与设备之间的 P2P/Relay 私有协议（`TPP2PProtocol` 系列，媒体流另有私有加密），云端没有可取流的 REST 接口；设备侧 RTSP 也只在有预览会话时才启动。因此本集成只提供**事件抓拍图**，不做实时视频。
 - **门锁常态休眠**：设备为电池供电深度休眠，在线状态经常为离线，属正常现象。
 - **TLS**：TP-LINK 部分节点证书链不完整，集成会自动降级为不校验（接口本身有 HMAC 签名保护），日志会出现一条 WARNING。
 - **仅支持物联云账号体系**：`n-wap-ipc.tplinkcloud.com.cn` 域名下的设备；Tapo/Kasa 本地协议（python-kasa）不支持门锁。
