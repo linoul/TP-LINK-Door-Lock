@@ -13,11 +13,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_DEVICES,
+    DEFAULT_MODEL,
     DOMAIN,
     LOG_TYPE_DOOR,
     LOG_TYPE_DOORBELL,
     LOG_TYPE_LOCK,
     LOG_TYPE_SETTING,
+    TEMPLATE_EVENT_MAP,
+    VERIFY_TYPE_LABELS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,25 +41,50 @@ EVENT_TYPE_LABELS = {
     "doorbell": "门铃",
     "verify_failed": "验证失败",
     "setting_change": "设置变更",
+    "loiter": "逗留告警",
+    "tamper": "防撬告警",
+    "remote_unlock": "远程开锁",
+    "low_battery": "低电量",
     "other": "其他",
 }
 
 EVENT_TYPES = [
     "unlock",          # 开门/解锁（含人脸/密码/指纹开门成功）
     "lock",            # 关门上锁
-    "door_alarm",      # 门异常（门未关/虚掩/撬动）
+    "door_alarm",      # 门异常（门未关/虚掩/未锁好）
     "doorbell",        # 门铃
     "verify_failed",   # 验证失败
     "setting_change",  # 设置变更
+    "loiter",          # 逗留 / 有人停留（SL42 Pro 猫眼侦测）
+    "tamper",          # 防撬 / 防拆 / 破坏
+    "remote_unlock",   # App / 远程开锁
+    "low_battery",     # 低电量提醒
     "other",           # 其他
 ]
 
 
 def classify_log(log: dict[str, Any]) -> str:
-    """按 logTypeId + 内容关键词归类。"""
+    """结构化 templateId 优先，logTypeId + 内容关键词兜底。
+
+    SL42 Pro 云端日志带 templateId/verifyType，比中文文案稳定；
+    未知 templateId 时回退到原有关键词逻辑，保证兼容 SL41 等旧型号。
+    """
+    template_id = str(log.get("templateId") or "")
+    if template_id in TEMPLATE_EVENT_MAP:
+        return TEMPLATE_EVENT_MAP[template_id]
+
     type_id = log.get("logTypeId")
     content = str(log.get("logContent") or "")
-    if type_id == LOG_TYPE_DOORBELL or "门铃" in content:
+
+    # SL42 Pro 新增告警类型：文案特征比 logTypeId 更明确，先判定，
+    # 避免被 logTypeId 的粗分类盖掉。未知类型仍走 other，不臆测。
+    if any(k in content for k in ("逗留", "有人停留", "徘徊", "长时间停留")):
+        return "loiter"
+    if any(k in content for k in ("防撬", "防拆", "撬动", "暴力", "破坏")):
+        return "tamper"
+    if any(k in content for k in ("低电量", "电量低", "电量不足", "更换电池")):
+        return "low_battery"
+    if type_id == LOG_TYPE_DOORBELL or "门铃" in content or "呼叫" in content:
         return "doorbell"
     if type_id == LOG_TYPE_DOOR or any(k in content for k in ("门未关", "虚掩", "撬", "防拆")):
         return "door_alarm"
@@ -65,6 +93,8 @@ def classify_log(log: dict[str, Any]) -> str:
     if "失败" in content:
         return "verify_failed"
     if type_id == LOG_TYPE_LOCK or any(k in content for k in ("上锁", "开锁", "开门", "解锁")):
+        if any(k in content for k in ("远程", "APP", "App", "手机开锁")):
+            return "remote_unlock"
         # 关门上锁 -> lock；其余含"开" -> unlock
         if "上锁" in content and "开" not in content.replace("开门上锁", ""):
             return "lock"
@@ -81,9 +111,11 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
+    models = data.get("device_models") or {}
     async_add_entities([
         TPLinkLockEventEntity(coordinator, dev["device_id"],
-                              dev.get("device_name") or dev["device_id"][-8:])
+                              dev.get("device_name") or dev["device_id"][-8:],
+                              models.get(dev["device_id"]))
         for dev in _devices_of(entry)
     ])
 
@@ -95,7 +127,8 @@ class TPLinkLockEventEntity(EventEntity):
     _attr_has_entity_name = True
     _attr_event_types = EVENT_TYPES
 
-    def __init__(self, coordinator, device_id: str, device_name: str) -> None:
+    def __init__(self, coordinator, device_id: str, device_name: str,
+                 model: str | None = None) -> None:
         super().__init__()
         self._coordinator = coordinator
         self._device_id = device_id
@@ -103,7 +136,7 @@ class TPLinkLockEventEntity(EventEntity):
             identifiers={(DOMAIN, device_id)},
             name=device_name,
             manufacturer="TP-LINK",
-            model="TL-SL41",
+            model=model or DEFAULT_MODEL,
             entry_type=DeviceEntryType.SERVICE,
         )
         self._attr_unique_id = "%s_events" % device_id
@@ -128,14 +161,21 @@ class TPLinkLockEventEntity(EventEntity):
             event_type = classify_log(log)
             _LOGGER.info("门锁事件(%s): [%s] %s", self._device_id[-6:],
                          event_type, log.get("logContent"))
-            self._trigger_event(
-                event_type,
-                {
-                    "content": log.get("logContent"),
-                    "logTypeId": log.get("logTypeId"),
-                    "logId": log.get("logId"),
-                },
-            )
+            verify_type = str(log.get("verifyType") or "")
+            attrs: dict[str, Any] = {
+                "content": log.get("logContent"),
+                "logTypeId": log.get("logTypeId"),
+                "templateId": log.get("templateId"),
+                "verifyType": log.get("verifyType"),
+                "verifyTypeLabel": VERIFY_TYPE_LABELS.get(verify_type) or "",
+                "logId": log.get("logId"),
+            }
+            # 逗留/门铃等告警日志带抓拍图与录像元数据，
+            # 暴露给自动化做「带图推送」（snapshotUrl 是公网可直取 JPEG）。
+            for key in ("snapshotUrl", "baseUrl", "duration", "fileSize"):
+                if log.get(key) is not None:
+                    attrs[key] = log[key]
+            self._trigger_event(event_type, attrs)
         # CoordinatorEntity 之外的普通实体需手动写状态
         self.async_write_ha_state()
 

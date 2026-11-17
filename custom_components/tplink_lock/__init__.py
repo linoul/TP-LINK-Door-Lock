@@ -14,14 +14,17 @@ from .const import (
     CONF_DEVICES,
     CONF_DEVICE_ID,
     CONF_TERMINAL_UUID,
+    DEFAULT_MODEL,
     DEFAULT_SCAN_INTERVAL,
+    DEVICE_INFO_FIELDS,
     DOMAIN,
 )
 from .coordinator import TPLinkLockCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "event"]
+PLATFORMS = ["sensor", "binary_sensor", "event", "image",
+             "select", "number", "switch"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -95,6 +98,28 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except TPLinkCloudError as err:
         _LOGGER.warning("TP-LINK 云端暂不可达（将自动重试）: %s", err)
 
+    # 读取云端真实设备信息（型号/固件/MAC/区域等），避免设备页显示
+    # 硬编码的 TL-SL41。仅在集成启动时取一次，复用配置向导已有的调用，
+    # 不额外增加云端请求；失败不影响功能，实体侧回退到 DEFAULT_MODEL。
+    device_models: dict[str, str] = {}
+    device_info: dict[str, dict] = {}
+    try:
+        cloud_devices = await hass.async_add_executor_job(client.get_device_list)
+        for cloud_dev in cloud_devices:
+            dev_id = str(cloud_dev.get("deviceId") or "")
+            if not dev_id:
+                continue
+            if cloud_dev.get("deviceModel"):
+                device_models[dev_id] = str(cloud_dev["deviceModel"])
+            # 白名单字段，避免把云端 token/密钥之类带进 hass.data
+            device_info[dev_id] = {
+                k: cloud_dev[k] for k in DEVICE_INFO_FIELDS
+                if cloud_dev.get(k) is not None
+            }
+        _LOGGER.debug("云端设备型号: %s", device_models)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("读取云端设备信息失败，使用兜底型号: %s", err)
+
     poll_interval = entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)
     coordinator = TPLinkLockCoordinator(hass, client, devices, poll_interval)
     await coordinator.async_config_entry_first_refresh()
@@ -105,7 +130,49 @@ async def _async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "client": client,
         "coordinator": coordinator,
+        "device_models": device_models,
+        "device_info": device_info,
     }
+
+    # 历史遗留修正：HA 对已注册的设备不会用实体 DeviceInfo 覆盖旧 model，
+    # 所以旧条目会一直显示 TL-SL41。这里显式更新一次注册表。
+    try:
+        from homeassistant.helpers import device_registry as dr
+
+        dev_reg = dr.async_get(hass)
+        for dev in devices:
+            dev_id = dev["device_id"]
+            info = device_info.get(dev_id) or {}
+            target_model = device_models.get(dev_id) or DEFAULT_MODEL
+            # HA 2026.x 起 async_get_device 已弃用，改用 async_get_devices
+            try:
+                candidates = dev_reg.async_get_devices()
+            except AttributeError:  # 兼容旧版 HA
+                candidates = list(dev_reg.devices.values())
+            ha_dev = next(
+                (item for item in candidates
+                 if (DOMAIN, dev_id) in item.identifiers),
+                None,
+            )
+            if not ha_dev:
+                continue
+            updates: dict = {}
+            if ha_dev.model != target_model:
+                updates["model"] = target_model
+            sw = info.get("fwVer")
+            if sw and ha_dev.sw_version != str(sw):
+                updates["sw_version"] = str(sw)
+            hw = info.get("hwVer") or info.get("deviceHwVer")
+            if hw and ha_dev.hw_version != str(hw):
+                updates["hw_version"] = str(hw)
+            mac = info.get("deviceMac") or info.get("mac")
+            if mac and ha_dev.serial_number != str(mac):
+                updates["serial_number"] = str(mac)
+            if updates:
+                dev_reg.async_update_device(ha_dev.id, **updates)
+                _LOGGER.debug("设备信息已更新: %s", list(updates))
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("更新设备信息失败（不影响功能）: %s", err)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.debug("平台加载完成")

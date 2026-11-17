@@ -311,11 +311,49 @@ class TPLinkCloudClient:
     def get_online_status(self) -> dict[str, Any]:
         return self._request("getDeviceOnlineStatus", {"deviceId": self.device_id})
 
+    # App 设置主页 getCommonConfigs 的原始模块清单（RN source map 还原）：
+    #   audio / audio_lib 放门铃音量与铃声库，network 放 WiFi 状态，
+    #   dev_manager 用空 name 取全量（含原有 dev_status 电量与锁状态）。
+    # 实测四模块一次返回，请求次数不变。
+    CONFIG_MODULES = {
+        "audio_lib": {"table": ["audio_lib_dev_back", "audio_lib_dev_pre"]},
+        "dev_manager": {"name": []},
+        "audio": {"name": ["ring_schedule", "ring", "lock_volume_cfg"]},
+        "network": {"name": ["wireless_status"]},
+    }
+
     def get_device_config(self) -> dict[str, Any]:
+        """读取设备全部配置段（一次请求，四个模块）。
+
+        逐级回退，保证老型号固件上原有电量/锁状态实体仍可用。
+        """
+        for modules in (
+            self.CONFIG_MODULES,
+            {"dev_manager": {"name": []}},
+            {"dev_manager": {"name": ["dev_status"]}},
+        ):
+            try:
+                return self._request(
+                    "getDeviceConfig",
+                    {"deviceId": self.device_id,
+                     "moduleSectionInfo": modules},
+                )
+            except TPLinkApiError:
+                _LOGGER.debug("配置段 %s 不支持，尝试下一级回退",
+                              list(modules.keys()))
+        raise TPLinkApiError("getDeviceConfig 所有配置段均不支持")
+
+    def set_device_desired_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """写入影子期望配置（App 设置页同款接口）。
+
+        config 形如 {"audio": {"lock_volume_cfg": {"notice_volume": "1"}}}，
+        字段值均为字符串。云端返回 {"online": bool}。
+        接口名来自 ShadowPromiseNetUtil.js 的 InterfaceType.ConfigSet；
+        旧猜的 setDeviceConfig 实际返回 -20103（接口不存在）。
+        """
         return self._request(
-            "getDeviceConfig",
-            {"deviceId": self.device_id,
-             "moduleSectionInfo": {"dev_manager": {"name": ["dev_status"]}}},
+            "setDeviceDesiredConfig",
+            {"deviceId": self.device_id, "config": config},
         )
 
     def get_logs(self, limit: int = 10) -> list[dict[str, Any]]:

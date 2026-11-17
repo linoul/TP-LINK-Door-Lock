@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .api import TPLinkApiError, TPLinkAuthError, TPLinkCloudClient, TPLinkCloudError
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, LOG_FETCH_LIMIT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         {
           "devices": {device_id: {"online", "config", "last_log",
-                                  "device_name"}},
+                                  "recent_logs", "device_name"}},
           "new_logs": {device_id: [log, ...]},   # 本轮新日志（事件分发用）
         }
 
@@ -63,7 +63,7 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 device_id = dev["device_id"]
                 self.client.device_id = device_id
                 logs = await self.hass.async_add_executor_job(
-                    self.client.get_logs, 10)
+                    self.client.get_logs, LOG_FETCH_LIMIT)
                 seen = self._seen_log_ids.setdefault(device_id, set())
                 new_logs = [log for log in logs
                             if log.get("logId") not in seen]
@@ -87,6 +87,8 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "online": online,
                     "config": config,
                     "last_log": last_log,
+                    # 本轮拉到的全部日志（desc），供统计类实体使用
+                    "recent_logs": logs,
                     "device_name": dev.get("device_name") or device_id[-8:],
                 }
                 if new_logs:
@@ -120,6 +122,20 @@ class TPLinkLockCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._fire_log_events(device_id, logs)
 
         return {"devices": devices_data, "new_logs": new_logs_map}
+
+    async def async_set_device_config(self, device_id: str,
+                                      config: dict[str, Any]) -> None:
+        """写入影子期望配置，成功后立即刷新，让所有实体读到新值。
+
+        供 select / number / switch 平台调用。同步 requests 放到 executor，
+        避免阻塞事件循环。异常向上抛给实体转换成 HomeAssistantError。
+        """
+        def _write() -> None:
+            self.client.device_id = device_id
+            self.client.set_device_desired_config(config)
+
+        await self.hass.async_add_executor_job(_write)
+        await self.async_refresh()
 
     def _backoff(self) -> None:
         """失败时指数退避（最长 5 分钟），成功后恢复，避免打爆云端。"""
